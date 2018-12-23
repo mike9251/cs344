@@ -81,6 +81,95 @@
 
 #include "utils.h"
 
+#define MAX(a, b) (((a) > (b)) ? (a): (b))
+#define MIN(a, b) (((a) < (b)) ? (a): (b))
+
+__global__
+void min_reduce(const float* const inputChannel,
+                   float* const block_min_value,
+                   int numRows, int numCols)
+{
+    uint idx = blockIdx.x * blockDim.x + threadIdx.x;
+    uint idy = blockIdx.y * blockDim.y + threadIdx.y;
+
+    uint pos_1d = idx + idy * numCols;
+
+    uint pos_1d_block = threadIdx.x + threadIdx.y * blockDim.x;
+
+    extern __shared__ float sdata[];
+
+    sdata[pos_1d_block] = inputChannel[pos_1d];
+
+    for(uint i = (blockDim.x * blockDim.y)/2; i > 0; i>>=1)
+    {
+        if (pos_1d_block < i)
+        {
+            //printf("Value: %f\n", inputChannel[pos_1d + i]);
+            sdata[pos_1d_block] = MIN(sdata[pos_1d_block], sdata[pos_1d_block + i]);
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0 && threadIdx.y == 0)
+    {
+        block_min_value[blockIdx.x + blockIdx.y * (1 + numCols / blockDim.x)] = sdata[0];
+    }
+
+}
+
+__global__
+void max_reduce(const float* const inputChannel,
+                   float* const block_max_value,
+                   int numRows, int numCols)
+{
+    uint idx = blockIdx.x * blockDim.x + threadIdx.x;
+    uint idy = blockIdx.y * blockDim.y + threadIdx.y;
+
+    uint pos_1d = idx + idy * numCols;
+
+    uint pos_1d_block = threadIdx.x + threadIdx.y * blockDim.x;
+
+    extern __shared__ float sdata[];
+
+    sdata[pos_1d_block] = inputChannel[pos_1d];
+
+    for(uint i = (blockDim.x * blockDim.y)/2; i > 0; i>>=1)
+    {
+        if (pos_1d_block < i)
+        {
+            //printf("Value: %f\n", inputChannel[pos_1d + i]);
+            sdata[threadIdx.y * blockDim.x + threadIdx.x] = MAX(sdata[pos_1d_block], sdata[pos_1d_block + i]);
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0 && threadIdx.y == 0)
+    {
+        block_max_value[blockIdx.x + blockIdx.y * (1 + numCols / blockDim.x)] = sdata[0];
+    }
+
+}
+
+void cpu_min_max(float *input, float &min, float &max, int numRows, int numCols)
+{
+    float tmp_min = 0;
+    float tmp_max = 0;
+    for (int i = 0; i < numRows * numCols; i++)
+    {
+        if(input[i] < tmp_min)
+        {
+            tmp_min = input[i];
+        }
+        if(input[i] > tmp_max)
+        {
+            tmp_max = input[i];
+        }
+    }
+
+    min = tmp_min;
+    max = tmp_max;
+}
+
 void your_histogram_and_prefixsum(const float* const d_logLuminance,
                                   unsigned int* const d_cdf,
                                   float &min_logLum,
@@ -99,6 +188,72 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
     4) Perform an exclusive scan (prefix sum) on the histogram to get
        the cumulative distribution of luminance values (this should go in the
        incoming d_cdf pointer which already has been allocated for you)       */
+  const dim3 blockSize(16, 16, 1);
+  const dim3 gridSize( (numCols + blockSize.x - 1) / blockSize.x, 
+                       (numRows + blockSize.y - 1) / blockSize.y, 1);
+  
+  float *d_block_min_value;
+  checkCudaErrors(cudaMalloc(&d_block_min_value, gridSize.x * gridSize.y * sizeof(float)));
+
+  float *d_block_max_value;
+  checkCudaErrors(cudaMalloc(&d_block_max_value, gridSize.x * gridSize.y * sizeof(float)));
+
+  min_reduce<<<gridSize, blockSize, blockSize.x * blockSize.y * sizeof(float)>>>(d_logLuminance, d_block_min_value, numRows, numCols);
+  max_reduce<<<gridSize, blockSize, blockSize.x * blockSize.y * sizeof(float)>>>(d_logLuminance, d_block_max_value, numRows, numCols);
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+  /*float* block_min_value = new float[gridSize.x * gridSize.y];
+  checkCudaErrors(cudaMemcpy(block_min_value,   d_block_min_value,   gridSize.x * gridSize.y * sizeof(float), cudaMemcpyDeviceToHost));
+  float* block_max_value = new float[gridSize.x * gridSize.y];
+  checkCudaErrors(cudaMemcpy(block_max_value,   d_block_max_value,   gridSize.x * gridSize.y * sizeof(float), cudaMemcpyDeviceToHost));
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+  for(int i = 0; i < gridSize.x * gridSize.y; i++){
+      printf("Min value: %f\n", block_min_value[i]);
+  }
+
+  for(int i = 0; i < gridSize.x * gridSize.y; i++){
+      printf("Max value: %f\n", block_max_value[i]);
+  }*/
 
 
+  float *d_min_value;
+  checkCudaErrors(cudaMalloc(&d_min_value, sizeof(float)));
+
+  float *d_max_value;
+  checkCudaErrors(cudaMalloc(&d_max_value, sizeof(float)));
+
+  const dim3 gridSize_1( (1, 1, 1));
+  min_reduce<<<gridSize_1, gridSize, gridSize.x * gridSize.y * sizeof(float)>>>(d_block_min_value, d_min_value, gridSize.y, gridSize.x);
+  max_reduce<<<gridSize_1, gridSize, gridSize.x * gridSize.y * sizeof(float)>>>(d_block_max_value, d_max_value, gridSize.y, gridSize.x);
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+  float min, max;
+
+  checkCudaErrors(cudaMemcpy(&min,   d_min_value,   sizeof(float), cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(&max,   d_max_value,   sizeof(float), cudaMemcpyDeviceToHost));
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+  /*printf("Min value: %f\n", min);
+  printf("Max value: %f\n", max);
+
+  printf("Num of blocks %d\n", gridSize.x * gridSize.y);
+
+  float* input = new float[numRows * numCols];
+  checkCudaErrors(cudaMemcpy(input,   d_logLuminance,   numRows * numCols * sizeof(float), cudaMemcpyDeviceToHost));
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+  cpu_min_max(input, min, max, numRows, numCols);
+
+  printf("Min value (CPU): %f\n", min);
+  printf("Max value (CPU): %f\n", max);*/
+
+
+  //delete [] block_min_value;
+  checkCudaErrors(cudaFree(d_block_min_value));
+  //delete [] block_max_value;
+  checkCudaErrors(cudaFree(d_block_max_value));
+
+  checkCudaErrors(cudaFree(d_min_value));
+  checkCudaErrors(cudaFree(d_max_value));
 }
