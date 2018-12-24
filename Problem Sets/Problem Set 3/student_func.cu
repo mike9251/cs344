@@ -99,6 +99,7 @@ void min_reduce(const float* const inputChannel,
     extern __shared__ float sdata[];
 
     sdata[pos_1d_block] = inputChannel[pos_1d];
+    __syncthreads();
 
     for(uint i = (blockDim.x * blockDim.y)/2; i > 0; i>>=1)
     {
@@ -132,6 +133,7 @@ void max_reduce(const float* const inputChannel,
     extern __shared__ float sdata[];
 
     sdata[pos_1d_block] = inputChannel[pos_1d];
+    __syncthreads();
 
     for(uint i = (blockDim.x * blockDim.y)/2; i > 0; i>>=1)
     {
