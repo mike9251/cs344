@@ -1,5 +1,5 @@
 //Udacity HW3 Driver
-
+#include <chrono>
 #include <iostream>
 #include "timer.h"
 #include "utils.h"
@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
   timer.Start();
   //call the students' code
   your_histogram_and_prefixsum(d_luminance, d_cdf, min_logLum, max_logLum,
-                               numRows, numCols, numBins);
+                               numRows, numCols, numBins);//, histo, prefix);
   timer.Stop();
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
   int err = printf("Your code ran in: %f msecs.\n", timer.Elapsed());
@@ -108,7 +108,13 @@ int main(int argc, char **argv) {
     max_logLum = std::max(h_luminance[i], max_logLum);
   }
 
+  std::chrono::microseconds total;
+  auto start = std::chrono::high_resolution_clock::now();
+
   referenceCalculation(h_luminance, h_cdf, numRows, numCols, numBins, min_logLum, max_logLum);
+
+  total = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start);
+  std::cout << "Reference code ran in: " << (double)(total.count()) / 1000 << " msecs." << std::endl;
 
   checkCudaErrors(cudaMemcpy(d_cdf, h_cdf, sizeof(unsigned int) * numBins, cudaMemcpyHostToDevice));
 
