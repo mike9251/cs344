@@ -8,6 +8,8 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 
+#include <chrono>
+
 #include "compare.h"
 #include "reference_calc.h"
 
@@ -64,7 +66,7 @@ int main(int argc, char **argv) {
   }
   //load the image and give us our input and output pointers
   preProcess(&inputVals, &inputPos, &outputVals, &outputPos, numElems, input_file, template_file);
-
+  
   GpuTimer timer;
   timer.Start();
 
@@ -110,10 +112,16 @@ int main(int argc, char **argv) {
 
   thrust::host_vector<unsigned int> h_outputVals(numElems);
   thrust::host_vector<unsigned int> h_outputPos(numElems);
+  
+  std::chrono::microseconds total;
+  auto start = std::chrono::high_resolution_clock::now();
 
   reference_calculation(&h_inputVals[0], &h_inputPos[0],
 						&h_outputVals[0], &h_outputPos[0],
 						numElems);
+  
+  total = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start);
+  std::cout << "Reference code ran in: " << (double)(total.count()) / 1000 << " msecs." << std::endl;
 
   //postProcess(valsPtr, posPtr, numElems, reference_file);
 
